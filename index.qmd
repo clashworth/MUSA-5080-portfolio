@@ -2,7 +2,7 @@
 title: "Home"
 ---
 
-# YOUR NAME HERE {#welcome}
+# Claudia Ashworth {#welcome}
 
 <!-- CHANGE THIS: replace with your own name above -->
 
@@ -30,5 +30,5 @@ I'm a student in the MUSA program at Penn. My background is in
 
 <!-- CHANGE THIS -->
 
-- Email: your-email@upenn.edu
-- GitHub: [@your-username](https://github.com/your-username)
+- Email: aclaudia@upenn.edu
+- GitHub: [@clashworth](https://github.com/clashworth)
