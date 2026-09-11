@@ -1,0 +1,110 @@
+---
+title: "Assignment 2: Who Do We Know the Least About?"
+subtitle: "Measuring uncertainty in American Community Survey data"
+author: "Claudia Ashworth"
+date: 9/10/26
+format:
+  html:
+    toc: true
+    code-fold: false
+execute:
+  warning: false
+  message: false
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+```
+
+
+```{r}
+my_state <- "NY"
+my_variable <- "B25064_001"
+```
+
+
+```{r}
+county_data <- get_acs(
+  geography = "county",
+  variables = my_variable,
+  state = my_state,
+  year = 2023,
+  survey = "acs5"
+)
+```
+
+```{r}
+dim(county_data)
+head(county_data)
+```
+
+**There are 62 rows, and 62 counties in New York state.**
+
+```{r}
+county_data <- county_data %>%
+  mutate(moe_pct = moe / estimate * 100)
+```
+
+
+```{r}
+county_data %>%
+  arrange(desc(moe_pct)) %>%
+  select(NAME, estimate, moe, moe_pct) %>%
+  head(10)
+```
+
+**The county with the largest margin of error to it's estimate, or the least reliable, is Hamilton County. The margin of error to it's estimate as a percent is 11.05%.**
+
+```{r}
+county_data <- county_data %>%
+  mutate(reliability = case_when(
+    moe_pct < 5  ~ "High confidence",
+    moe_pct < 10 ~ "Moderate",
+    TRUE         ~ "Low confidence"
+  ))
+
+count(county_data, reliability)
+```
+
+**When I first kept the margins to < 5% and <10%, the numbers came up as 51 high confidence, 1 low confidence, and 10 moderate confidence. But when I adjusted the cut offs to < 3% and < 10%, the numbers shifted significantly to 27 high confidence, 1 low confidence, and 34 moderate confidence. The shows that there were 24 counties that had a 3-4% margin of error, which is realitively high considering the number of total counties in the state of NY. **
+
+```{r}
+county_wide <- get_acs(
+  geography = "county",
+  variables = c(myvar = my_variable,
+                pop   = "B01003_001"),
+  state = my_state,
+  year = 2023,
+  survey = "acs5",
+  output = "wide"
+)
+
+head(county_wide)
+```
+
+```{r}
+county_wide <- county_wide %>%
+  mutate(moe_pct = myvarM / myvarE * 100) %>%
+  mutate(reliability = case_when(
+    moe_pct < 5  ~ "High confidence",
+    moe_pct < 15 ~ "Moderate",
+    TRUE         ~ "Low confidence"
+  ))
+```
+
+```{r}
+county_wide %>%
+  group_by(reliability) %>%
+  summarize(
+    n_counties = n(),
+    avg_population = mean(popE)
+  )
+```
+
+
+**We are grouping by reliability (in this case either high or moderate), then the number of counties in each category, with the mean of the estimated population for all of the counties in each category. The average population of high-confidence counties is 381,479.14, where moderate counties are 37,898.45. This indicates that the average population for counties with a moderate reliability are significantly lower than counties with a high confidence. This means that the larger the county, the more reliable the numbers are.**
+
+**The counties in New York state that we know the least about are Hamilton County, Schuyler County, Greene County, Lewis County, Orleans County, Wyoming County, and Yates County. All of these counties have Moderate (<5%x<15%) percent margin of error for the Gross Median Rent. These are also counties that have smaller estimated population sizes. Because the ACS only collects data from a sample of the population, it makes sense that in counties with smaller estimated population sizes there would be a higher percent margin of error since they are less people to be surveyed. That being said, the majority of the county falls within High Confidence reliability, meaning that their percent margin of error is <5%, and their population size is larger. The average population size for High Confidence counties (n=51) is 381,479.14 while for Moderate counties (n=11) it is 37,898.45.
+	When a state agency allocates funding using my variable (gross median rent), they would be missing a significant portion of the population of the less populous counties. This could fail to consider the reality of the housing affordability crisis in smaller, more rural counties in New York state.**
+
+
