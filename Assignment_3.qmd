@@ -1,0 +1,370 @@
+---
+title: "Verify the Claim: Poverty Increase and Widening Income Disparity in Philadelphia 2006-2017"
+author: "Claudia Ashworth"
+date: today
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-summary: "Show code"
+    embed-resources: true
+editor: visual
+---
+
+**I first pulled 5-year ACS data for 2006-2010 and 2013-2017 for total population, population below poverty level, and medium household income at the census tract level.These are the two most referenced chunks of data in the article. These time periods do not overlap, which is important in preventing any kind of distorted trend. I then found the Census Tracts with the population estimates as zero. These tracts were the same for both 2006-2010 and 2013-2017. Cross referencing with a map, these are areas that are have industrial uses. I chose to remove these tracts from my analysis because even though they have a margin of error, the sample size would be so small it would be highly unreliable. I then calculated the poverty rate, it's margin of error, and the coefficient of variation for the ACS 2006-2010 and ACS 2013-2017 data. Report how many tracts show a statistically detectable change and how many do not:       **
+
+#ACS 2006-2017
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+
+acs_10 <- get_acs(
+  geography = "tract",
+  variables = c(
+    total = "B17001_001",
+    below_poverty = "B17001_002",
+    medium_HH_income = "B19013_001E"
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2010,
+  survey = "acs5",
+  output =  "wide"
+)
+```
+
+#ACS 2013-2017
+
+```{r}
+acs_17 <- get_acs(
+  geography = "tract",
+  variables = c(
+    total = "B17001_001",
+    below_poverty = "B17001_002",
+    medium_HH_income = "B19013_001E"
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2017,
+  survey = "acs5",
+  output = "wide"
+)
+```
+
+#Missing Values
+
+```{r}
+acs_10 <- acs_10 %>%
+  filter(totalE != 0 & !is.na(totalE))
+
+acs_17 <- acs_10 %>%
+  filter(totalE != 0 & !is.na(totalE))
+```
+
+```{r}
+ 
+#Poverty Percent and Margin of Error
+
+acs_10 <- acs_10 %>%
+  mutate(
+    poverty_pct = below_povertyE / totalE * 100,
+    moe_pct = moe_prop(
+      below_povertyE,
+      totalE,
+      below_povertyM,
+      totalM
+    )
+  )
+
+acs_17 <- acs_17 %>%
+  mutate(
+    poverty_pct = below_povertyE / totalE * 100,
+    moe_pct = moe_prop(
+      below_povertyE,
+      totalE,
+      below_povertyM,
+      totalM
+    )
+  )
+
+#Standard Error and Coefficient of Variation
+
+acs_10 <- acs_10 %>%
+  mutate(
+    se = moe_pct / 1.645,
+    cv = (se / poverty_pct) * 100,
+    reliability = case_when(
+      cv < 12  ~ "High",
+      cv <= 40 ~ "Moderate",
+      TRUE             ~ "Low"
+    )
+  )
+
+acs_17 <- acs_17 %>%
+  mutate(
+    se = moe_pct / 1.645,
+    cv = (se / poverty_pct) * 100,
+    reliability = case_when(
+      cv < 12  ~ "High",
+      cv <= 40 ~ "Moderate",
+      TRUE             ~ "Low"
+    )
+  )
+
+```
+
+```{r}
+
+acs_10 <- acs_10 %>%
+  mutate(
+    se = moe_pct / 1.645,
+    cv = (se / poverty_pct) * 100,
+    reliability = case_when(
+      cv < 12  ~ "High",
+      cv <= 40 ~ "Moderate",
+      TRUE             ~ "Low"
+    )
+  )
+
+acs_17 <- acs_17 %>%
+  mutate(
+    se = moe_pct / 1.645,
+    cv = (se / poverty_pct) * 100,
+    reliability = case_when(
+      cv < 12  ~ "High",
+      cv <= 40 ~ "Moderate",
+      TRUE             ~ "Low"
+    )
+  )
+```
+
+#Visualizing Margins of Error
+
+```{r}
+acs_17 %>%
+  arrange(desc(moe_pct)) %>%
+  mutate(NAME = str_remove(NAME, ", Philadelphia County, Pennsylvania")) %>%
+  slice_head(n = 15) %>%
+  ggplot(aes(x = reorder(NAME, totalE), y = totalE)) +
+  geom_col(fill = "orange") +
+  geom_errorbar(aes(ymin = totalE - totalM, ymax = totalE + totalM), width = 0.3, color = "black") +
+  coord_flip() +
+  labs(
+    title = "Census Tracts with the largest margins of error",
+    subtitle = "People below the poverty level, ACS 2017 5-year estimates",
+    x = NULL,
+    y = "Population below poverty level"
+  )
+```  
+
+#Calculating change over time for poverty and medium household income.
+
+```{r}
+acs_10_poverty <- get_acs(
+  geography = "tract",
+  variables = c(
+    below_poverty = "B17001_002"
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2010,
+  survey = "acs5",
+  output =  "wide"
+)
+
+
+acs_17_poverty <- get_acs(
+  geography = "tract",
+  variables = c(
+    below_poverty = "B17001_002"
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2017,
+  survey = "acs5",
+  output =  "wide"
+)
+
+#I then joined the two tables together
+
+philly_poverty <- acs_10_poverty %>%
+  left_join (
+    acs_17_poverty,
+    by = "GEOID",
+    suffix = c("_2010", "_2017")
+  )
+
+#and then calculated the change between the two periods
+
+philly_poverty <- philly_poverty %>%
+  mutate (
+    change = below_povertyE_2017 - below_povertyE_2010,
+    se_1 = below_povertyM_2010 / 1.645,
+    se_2 = below_povertyM_2017 / 1.645,
+    se_diff  = sqrt(se_1^2 + se_2^2),
+    moe_diff = se_diff * 1.645,
+    z        = change / se_diff,
+    significant = abs(z) > 1.645
+  )
+
+philly_poverty <- philly_poverty %>%
+  filter(below_povertyE_2010 != 0 & !is.na(below_povertyE_2010))
+
+philly_poverty %>%
+  count(significant)
+
+#I repeated the above steps but for medium household income.
+
+acs_10_income <- get_acs(
+  geography = "tract",
+  variables = c(
+    medium_HH_income = "B19013_001E"
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2010,
+  survey = "acs5",
+  output =  "wide"
+)
+
+acs_17_income <- get_acs(
+  geography = "tract",
+  variables = c(
+    medium_HH_income = "B19013_001E"
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2017,
+  survey = "acs5",
+  output =  "wide"
+)
+
+philly_income <- acs_10_income %>%
+  left_join (
+    acs_17_income,
+    by = "GEOID",
+    suffix = c("_2010", "_2017")
+  )
+
+philly_income <- philly_income %>%
+  mutate (
+    change = medium_HH_income_2017 - medium_HH_income_2010,
+    se_1 = B19013_001M_2010 / 1.645,
+    se_2 = B19013_001M_2017 / 1.645,
+    se_diff  = sqrt(se_1^2 + se_2^2),
+    moe_diff = se_diff * 1.645,
+    z        = change / se_diff,
+    significant = abs(z) > 1.645
+  )
+
+philly_income <- philly_income %>%
+  filter(medium_HH_income_2010 != 0 & !is.na(medium_HH_income_2010))
+
+philly_income %>%
+  count(significant)
+
+```
+
+#Visualizing Signifigance
+
+```{r}
+philly_poverty %>%
+  filter(significant) %>%
+  mutate(
+    NAME_2010 = str_remove(NAME_2010, ", Philadelphia County, Pennsylvania"),
+    NAME_2017 = str_remove(NAME_2017, ", Philadelphia County, Pennsylvania")
+  ) %>%
+  slice_head(n = 20) %>%
+  ggplot(aes(x = reorder(NAME_2010, change), y = change)) +
+  geom_col(aes(fill = change > 0)) +
+  geom_errorbar(
+    aes(
+      ymin = change - moe_diff,
+      ymax = change + moe_diff
+    ),
+    width = 0.3
+  ) +
+  geom_hline(yintercept = 0) +
+  coord_flip() +
+  labs(
+    title = "Statistically significant change in poverty by census tract in Philadelphia",
+    subtitle = "2006–2010 vs 2013–2017, ACS 5-year estimates",
+    x = NULL,
+    y = "Change in people below poverty level"
+  )
+```
+
+#Visualizing reliability 
+
+```{r}
+
+library(gt)              
+
+reliability_table <- acs_17 %>%
+  mutate(
+    cv = (moe_pct / 1.645) / poverty_pct * 100,
+    dot = case_when(
+      cv < 12  ~ "🟢",
+      cv <= 40 ~ "🟡",
+      TRUE     ~ "🔴",
+    ),
+    flag = case_when(
+      cv < 12  ~ "Reliable",
+      cv <= 40 ~ "Somewhat reliable",
+      TRUE     ~ "Unreliable"
+    ),
+    NAME = str_remove(NAME, ", Philadelphia County, Pennsylvania")
+  ) %>%
+  arrange(desc(cv)) %>%
+  select(dot, NAME, below_povertyE, below_povertyM, cv, flag)
+
+reliability_table %>%
+  gt() %>%
+  fmt_number(
+    columns = c(below_povertyE, below_povertyM),
+    decimals = 0
+  ) %>%
+  fmt_number(
+    columns = cv,
+    decimals = 1
+  ) %>%
+  cols_label(
+    dot = "",
+    NAME = "Census Tract",
+    below_povertyE = "Estimate",
+    below_povertyM = "MOE",
+    cv = "CV (%)",
+    flag = "Reliability"
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = dot
+  ) %>%
+  tab_header(
+    title = "Population below 100% of the poverty level",
+    subtitle = "Philadelphia Census Tracts, ACS 2017 5-year estimates"
+  )
+```
+#Part 3: Adjudicate
+The article argues that there has been an increase in people living below the poverty level and a widening of wage inequality in Philadelphia between 2006-2010 and 2013-2017. Despite this being true for the estimated values, the article does not take into consideration the statistical uncertainty of the data.
+
+Out of the 306 Census Tracts (I excluded the tracts that were NA), only 69 (23%) of them experienced a change in poverty rates that are statistically distinguishable from zero at the 90 percent confidence level. The increases and decreases in the remaining tracts cannot be used because of the uncertainty. This is also true for the change in medium household income, where out of the 306 Census Tracts, only 78 (25%) are statistically distinguishable from zero at the 90 percent confidence level. Rather that indicating that there has been a change in poverty in Philadelphia between these two time periods, the data simple shows that poverty continues to exist.
+
+#Part 4: Rewrite
+
+A surface-level analysis of the change in poverty level and medium household income in Philadelphia from data taken from the 5-year ACS for 2006-2010 and 2013-2017 indicate that there has been a drastic increase in poverty. However, this data does not take into consideration the margin of error of this data, and therefore the margin of error in the rate of change. 
+That is, only 23% of the poverty data and 25% of the medium household income data show changes that would be considered statistically significant.
+Despite this uncertainty, the data still indicates that poverty has been and continues to be pervasive in Philadelphia. There has just not been a large signifigant change.
+
+
+
+
+
+
+
+
+
+
+
+
