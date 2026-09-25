@@ -1,0 +1,37 @@
+---
+title: "Week 3: Data Visualization and Navigating Statistical Uncertainty"
+description: "ggplot and more MOEs"
+date: 2026-09-04
+---
+
+## What We Did
+
+First, we had a quiz. It was scary, but I did it.
+
+
+## Key Concepts
+
+
+The loop: **Edit → Save → Render → Commit → Push → wait → refresh**
+
+## Proving R Works
+
+The chunk below runs when this page renders. If you can see a result underneath
+it on your published site, R and Quarto are talking to each other correctly.
+
+```{r}
+sessionInfo()$R.version$version.string
+```
+
+## Reflection
+
+<!-- CHANGE THIS: 3-4 sentences -->
+
+What I want out of this course: I want to learn how to analyze data and map it spatially. 
+
+One thing I'm nervous about: Learning how to code generally, I have never done it before.
+
+## Questions I Still Have
+
+-
+-
