@@ -11,7 +11,7 @@ format:
 editor: visual
 ---
 
-**I first pulled 5-year ACS data for 2006-2010 and 2013-2017 for total population, population below poverty level, and medium household income at the census tract level.These are the two most referenced chunks of data in the article. These time periods do not overlap, which is important in preventing any kind of distorted trend. I then found the Census Tracts with the population estimates as zero. These tracts were the same for both 2006-2010 and 2013-2017. Cross referencing with a map, these are areas that are have industrial uses. I chose to remove these tracts from my analysis because even though they have a margin of error, the sample size would be so small it would be highly unreliable. I then calculated the poverty rate, it's margin of error, and the coefficient of variation for the ACS 2006-2010 and ACS 2013-2017 data. Report how many tracts show a statistically detectable change and how many do not:       **
+**I first pulled 5-year ACS data for 2006-2010 and 2013-2017 for total population, population below poverty level, and medium household income at the census tract level.These are the two most referenced chunks of data in the article. These time periods do not overlap, which is important in preventing any kind of distorted trend. I then found the Census Tracts with the population estimates as zero. These tracts were the same for both 2006-2010 and 2013-2017. Cross referencing with a map, these are areas that are have industrial uses. I chose to remove these tracts from my analysis because even though they have a margin of error, the sample size would be so small it would be highly unreliable. I then calculated the poverty rate, it's margin of error, and the coefficient of variation for the ACS 2006-2010 and ACS 2013-2017 data. Report how many tracts show a statistically detectable change and how many do not:**
 
 #ACS 2006-2017
 
@@ -156,7 +156,7 @@ acs_17 %>%
     x = NULL,
     y = "Population below poverty level"
   )
-```  
+```
 
 #Calculating change over time for poverty and medium household income.
 
@@ -295,7 +295,7 @@ philly_poverty %>%
   )
 ```
 
-#Visualizing reliability 
+#Visualizing reliability
 
 ```{r}
 
@@ -346,25 +346,11 @@ reliability_table %>%
     subtitle = "Philadelphia Census Tracts, ACS 2017 5-year estimates"
   )
 ```
-#Part 3: Adjudicate
-The article argues that there has been an increase in people living below the poverty level and a widening of wage inequality in Philadelphia between 2006-2010 and 2013-2017. Despite this being true for the estimated values, the article does not take into consideration the statistical uncertainty of the data.
+
+#Part 3: Adjudicate The article argues that there has been an increase in people living below the poverty level and a widening of wage inequality in Philadelphia between 2006-2010 and 2013-2017. Despite this being true for the estimated values, the article does not take into consideration the statistical uncertainty of the data.
 
 Out of the 306 Census Tracts (I excluded the tracts that were NA), only 69 (23%) of them experienced a change in poverty rates that are statistically distinguishable from zero at the 90 percent confidence level. The increases and decreases in the remaining tracts cannot be used because of the uncertainty. This is also true for the change in medium household income, where out of the 306 Census Tracts, only 78 (25%) are statistically distinguishable from zero at the 90 percent confidence level. Rather that indicating that there has been a change in poverty in Philadelphia between these two time periods, the data simple shows that poverty continues to exist.
 
 #Part 4: Rewrite
 
-A surface-level analysis of the change in poverty level and medium household income in Philadelphia from data taken from the 5-year ACS for 2006-2010 and 2013-2017 indicate that there has been a drastic increase in poverty. However, this data does not take into consideration the margin of error of this data, and therefore the margin of error in the rate of change. 
-That is, only 23% of the poverty data and 25% of the medium household income data show changes that would be considered statistically significant.
-Despite this uncertainty, the data still indicates that poverty has been and continues to be pervasive in Philadelphia. There has just not been a large signifigant change.
-
-
-
-
-
-
-
-
-
-
-
-
+A surface-level analysis of the change in poverty level and medium household income in Philadelphia from data taken from the 5-year ACS for 2006-2010 and 2013-2017 indicate that there has been a drastic increase in poverty. However, this data does not take into consideration the margin of error of this data, and therefore the margin of error in the rate of change. That is, only 23% of the poverty data and 25% of the medium household income data show changes that would be considered statistically significant. Despite this uncertainty, the data still indicates that poverty has been and continues to be pervasive in Philadelphia. There has just not been a large signifigant change.
