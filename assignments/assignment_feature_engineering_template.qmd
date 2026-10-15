@@ -1,0 +1,759 @@
+---
+title: "Assignment: Building Features, Watching What Happens"
+subtitle: "MUSA 5080 · Integrates Weeks 1–5 · Due Friday, October 16"
+author: "Claudia Ashworth"
+format:
+  html:
+    toc: true
+    code-fold: show
+    code-tools: true
+execute:
+  warning: false
+  message: false
+freeze: false
+---
+
+## What this assignment is (and isn't)
+
+This is **not a competition.** There's no leaderboard and no target RMSE. The goal is to practice the full prediction workflow on a question you choose, and to **find out what actually helps.** Some features you're sure will help won't, and some you add on a whim will. Both are findings.
+
+You'll:
+
+1. Choose a tract-level outcome for Philadelphia and check whether it's reliable enough to model (Weeks 2–3).
+2. Fit a baseline model and cross-validate it (Week 5).
+3. Pull data from Philadelphia's open data portal through its API and build spatial features: counts, densities, and distances (Week 4, plus one new tool).
+4. Transform variables with logs, squared terms, and categories. **Watch the October 9 recorded lecture before Part 5.**
+5. Keep a **model log** the whole way through, and compare where your first and final models go wrong.
+
+**Timing.** Parts 1–4 use only what we've covered through Week 5. You can finish them before the October 9 lecture. Part 5 is new material; the lecture explains it, and the instructions below give you the essentials.
+
+**Type the code yourself.** The worked examples show the pattern. Your job is to apply it to your outcome and your data choices.
+
+### Three rules that apply everywhere
+
+::: {.callout-important}
+## 1. Don't drop rows
+Every model is cross-validated on the same tracts with the same folds, so the rows in your model log are comparable. If a new variable has missing values, fill them (for example, 0 for a count, or the median with a note) or choose a different variable. The `cv_rmse()` helper below will stop and tell you if you break this rule.
+
+## 2. Stay inside the time window
+Your outcome comes from the 2019–2023 ACS. Pull open data from **2023 or earlier** (2021–2023 is ideal). Using 2025 data to predict a 2023 outcome uses information from the future, which a real prediction model would never have.
+
+## 3. No leakage
+Don't use any variable that's built from your outcome or measures the same thing another way. Ask yourself: *would an agency trying to predict this outcome for a tract have this variable?* If the answer is "only because it's basically the outcome," leave it out.
+:::
+
+---
+
+## Part 0: Setup
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(caret)
+
+Sys.getenv("CENSUS_API_KEY") != ""   # should print TRUE
+```
+
+### The cross-validation helper
+
+This function runs 10-fold cross-validation with the same seed every time, so every model in your log is tested on the same folds. **You don't need to change it.** Read it once so you know what it does.
+
+```{r}
+#| label: cv-helper
+ctrl <- trainControl(method = "cv", number = 10)
+
+cv_rmse <- function(formula, data) {
+  df <- if (inherits(data, "sf")) st_drop_geometry(data) else data
+  vars <- all.vars(formula)
+  bad <- vars[sapply(vars, function(v) any(is.na(df[[v]])))]
+  if (length(bad) > 0) {
+    stop("These variables have NAs: ", paste(bad, collapse = ", "),
+         ". Fill them or choose another variable (Rule 1: don't drop rows).")
+  }
+  set.seed(5080)
+  fit <- train(formula, data = df, method = "lm", trControl = ctrl)
+  fit$results$RMSE
+}
+```
+
+### The model log
+
+Every time you fit a new model, add a row. By the end, this table is the story of your assignment.
+
+```{r}
+#| label: log-start
+model_log <- tibble(
+  model   = character(),
+  added   = character(),
+  cv_rmse = numeric(),
+  notes   = character()
+)
+```
+
+---
+
+## Part 1: Choose your outcome
+
+Pick a **tract-level ACS variable for Philadelphia** that matters for policy. Two outcomes are off limits: median gross rent (we did it in lab) and median home value (save it for A4).
+
+Some ideas if you're stuck:
+
+| Outcome | Why an agency might care | ACS table |
+|---|---|---|
+| % of households with no vehicle | Transit planning | B08201 or B25044 |
+| Mean travel time to work | Access to jobs | B08013_001 ÷ B08303_001 |
+| % of people below poverty | Targeting services | B17001 |
+| % of housing units vacant | Housing and blight | B25002 |
+| % of households overcrowded | Housing conditions | B25014 |
+
+Use `load_variables(2023, "acs5")` to browse and find exact variable codes.
+
+```{r}
+load_variables(2023, "acs5")
+```
+
+
+### 1A: Pull your outcome and your baseline predictors
+
+Choose **three to five ACS predictors** for your baseline model. They should be things that plausibly relate to your outcome, but **none of them may be built from your outcome** (Rule 3).
+
+```{r}
+#| label: pull
+philly_tracts <- get_acs(
+  geography = "tract",
+  state = "PA",
+  county = "Philadelphia",
+  variables = c(
+    total_pop = "B01003_001",
+    # your outcome's numerator and denominator (or median), e.g.:
+    pop_below_poverty = "B17001_002",
+    # your baseline predictors, e.g.:
+    no_schooling_completed = "B15003_002",
+    female_pop = "B01001_026",
+    black_pop = "B02001_003E"
+  ),
+  year = 2023,
+  output = "wide",
+  geometry = TRUE
+) %>%
+  st_transform(2272)
+```
+
+```{r}
+#| label: build-outcome
+philly_tracts <- philly_tracts %>%
+  mutate(
+    # Poverty
+    per_below_poverty = pop_below_povertyE / total_popE * 100,
+    per_below_poverty_moe = moe_prop(pop_below_povertyE, total_popE, pop_below_povertyM, total_popM),
+    per_below_poverty_cv = (per_below_poverty_moe / 1.645) / per_below_poverty * 100,
+
+    # Educational attainment
+    per_no_schooling_completed = no_schooling_completedE / total_popE * 100,
+    per_no_schooling_completed_moe = moe_prop(no_schooling_completedE, total_popE, no_schooling_completedM, total_popM),
+    per_no_schooling_completed_cv = (per_no_schooling_completed_moe / 1.645) / per_no_schooling_completed * 100,
+
+    # Female population
+    per_female_pop = female_popE / total_popE * 100,
+    per_female_pop_moe = moe_prop(female_popE, total_popE, female_popM, total_popM),
+    per_female_pop_cv = (per_female_pop_moe / 1.645) / per_female_pop * 100,
+
+    # Black population
+    per_black_pop = black_pop / total_popE * 100,
+    per_black_pop_moe = moe_prop(black_pop, total_popE, B02001_003M, total_popM),
+    per_black_pop_cv = (per_black_pop_moe / 1.645) / per_black_pop * 100
+  )
+
+```
+
+### 1B: Is it reliable enough to model?
+
+Before you commit, check three things.
+
+```{r}
+#| label: reliability
+# How many tracts have no value for your outcome?
+sum(is.na(philly_tracts$per_below_poverty_cv))
+
+# How reliable is it?
+summary(philly_tracts$per_below_poverty_cv)
+
+philly_tracts %>%
+  mutate(reliability = case_when(
+    per_below_poverty_cv < 12  ~ "High",
+    per_below_poverty_cv <= 40 ~ "Moderate",
+    TRUE       ~ "Low"
+  )) %>%
+  st_drop_geometry() %>%
+  count(reliability)
+
+# What does the distribution look like?
+ggplot(philly_tracts, aes(x = per_below_poverty_cv)) +
+  geom_histogram(bins = 30) +
+  theme_minimal()
+```
+
+If more than about a third of tracts have low reliability, consider a different outcome, or one built from larger counts. Write your reasoning either way.
+
+**Answer (2–3 sentences):** What is your outcome, why would an agency want to predict it, and how reliable is it?
+
+*My outcome variable is percent of the total population below poverty by census tract in Philadelphia County. An agency would want to predict this in order to know which areas are in need of services relates to poverty alleviation (jobs, more funding for schools). The reliability of the outcome is high, in that only 4.9% (20) of the census tracts have CVs with a low reliability, while 95% (388) have CVs with high reliability.*
+
+### 1C: Decide which tracts to model
+
+Filter once, here, and never again. Every later step uses `tracts`.
+
+```{r}
+#| label: filter
+tracts <- philly_tracts %>%
+  filter(total_popE > 0,
+         !is.na(per_below_poverty_cv),
+         !is.na(per_no_schooling_completed_cv),
+         !is.na(per_female_pop_cv),
+         !is.na(per_black_pop_cv))
+
+nrow(philly_tracts)
+nrow(tracts)
+```
+
+**Answer:** How many tracts did you lose, and what kinds of places are they?
+
+*We lost 17 census tracts. Cross-checking with a map, these are places that are mainly zoned industrial with little to no population.*
+
+---
+
+## Part 2: Baseline model
+
+### 2A: Look first
+
+Plot your outcome against each predictor before modeling (the Week 3 habit).
+
+```{r}
+#| label: look
+# one scatterplot per predictor, e.g.:
+  ggplot(tracts, aes(x = NAME, y = per_no_schooling_completed_cv)) + geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) + theme_minimal()
+
+  ggplot(tracts, aes(x = NAME, y = per_female_pop_cv)) + geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) + theme_minimal()
+  
+  ggplot(tracts, aes(x = NAME, y = per_black_pop_cv)) + geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) + theme_minimal()
+
+
+```
+
+### 2B: Fit and log
+
+```{r}
+#| label: m1
+f1 <- per_below_poverty ~ per_no_schooling_completed + per_female_pop + per_black_pop
+
+m1 <- lm(f1, data = tracts)
+summary(m1)
+
+model_log <- model_log %>%
+  add_row(model = "m1", added = "ACS baseline",
+          cv_rmse = cv_rmse(f1, tracts),
+          notes = "model")
+
+model_log
+```
+
+#Write the CV RMSE as a sentence, in your outcome's units: "On tracts it hasn't seen, the baseline model misses by about 11.85 percentage points.#
+
+### 2C: Where is the baseline wrong?
+
+Save this map. You'll compare it to your final model's map in Part 6.
+
+```{r}
+#| label: resid-map-1
+tracts <- tracts %>% mutate(resid_m1 = residuals(m1))
+
+ggplot(tracts) +
+  geom_sf(aes(fill = resid_m1), color = NA) +
+  scale_fill_gradient2(low = "orange", mid = "grey95", high = "#b2182b", midpoint = 0) +
+  theme_void() +
+  labs(title = "Baseline model: where it's wrong",
+       subtitle = "Red = actual higher than predicted",
+       fill = "Residual")
+```
+
+Where do the residuals cluster? What might those places have in common that your model doesn't know about?
+
+*The residuals are clustering in North Philadelphia, Brewery Town, and Strawberry Mansion. This means that these are census tracts where percent of the population below poverty is higher than the model (the three predictors of no schooling, female population, and black population) predicts. This means that there may be other reasons people are living below poverty that might more accurately explain the difference, such as neighborhood disinvestment or access to employment.*
+
+**Use this answer to choose your open data layers in Part 3.**
+
+---
+
+## Part 3: Getting data from Philadelphia's open data portal
+
+Many of the city's datasets on [OpenDataPhilly](https://opendataphilly.org) are served through a **Carto SQL API**. You send a SQL query in a URL, and it sends back data. Ask for `format=GeoJSON` and `st_read()` reads the result directly, just like the Indego feed in Week 4.
+
+The pattern:
+
+```
+https://phl.carto.com/api/v2/sql?format=GeoJSON&q=SELECT ... FROM table_name WHERE ...
+```
+
+Three pieces of SQL are all you need:
+
+- `SELECT the_geom, column1, column2` chooses which columns come back. **Always include `the_geom`**, or you get no geometry.
+- `FROM table_name` chooses the dataset.
+- `WHERE ...` filters rows. **Filter in the query, not in R.** Some tables have millions of rows, and pulling everything will be slow or fail.
+
+This helper builds the URL for you. Spaces and symbols in a URL need encoding, and `URLencode()` handles that.
+
+```{r}
+#| label: carto-helper
+carto_get <- function(sql) {
+  url <- paste0("https://phl.carto.com/api/v2/sql?format=GeoJSON&q=", URLencode(sql))
+  st_read(url, quiet = TRUE)
+}
+```
+
+### Finding a table name
+
+On a dataset's OpenDataPhilly page, look for the API link. The table name is the word after `FROM` in the example query. To see what values a column takes before you filter on it, ask for a count in CSV format:
+
+```{r}
+#| label: explore-values
+# What kinds of crime are in the incidents table in 2023?
+url <- paste0("https://phl.carto.com/api/v2/sql?format=csv&q=",
+              URLencode("SELECT text_general_code, COUNT(*) AS n
+                         FROM incidents_part1_part2
+                         WHERE dispatch_date >= '2023-01-01' AND dispatch_date < '2024-01-01'
+                         GROUP BY text_general_code ORDER BY n DESC"))
+read_csv(url)
+```
+
+### Worked example: residential burglaries in 2023
+
+```{r}
+#| label: worked-burglary
+burglary <- carto_get(
+  "SELECT the_geom, text_general_code, dispatch_date
+   FROM incidents_part1_part2
+   WHERE dispatch_date >= '2023-01-01' AND dispatch_date < '2024-01-01'
+     AND text_general_code = 'Burglary Residential'"
+) %>%
+  st_transform(st_crs(tracts))    # Carto returns EPSG 4326; translate immediately
+
+nrow(burglary)
+
+burglary <- burglary %>%
+  filter(!st_is_empty(geometry))
+
+```
+
+::: {.callout-warning}
+## Check for missing geometry
+Some records have no location. Drop them with `filter(!st_is_empty(burglary))`, and count how many you lost. Every point you drop is a point that won't be counted.
+
+*There are now 3681 burglaries.*
+:::
+
+### Other layers to try
+
+These tables were available on Carto as of this fall. If a query fails, check the dataset's OpenDataPhilly page for the current table name.
+
+| Data | Table | Filter on | Notes |
+|---|---|---|---|
+| Crime incidents | `incidents_part1_part2` | `dispatch_date`, `text_general_code` | Pick specific offense types |
+| Shooting victims | `shootings` | `date_` | Small enough to pull several years |
+| 311 requests | `public_cases_fc` | `requested_datetime`, `service_name` | Use the count query above to see service names |
+| Indego stations | *(not Carto)* `https://www.rideindego.com/stations/json/` | — | The Week 4 feed |
+
+Datasets not on Carto often have a GeoJSON download link on their OpenDataPhilly page. `st_read()` reads those URLs too.
+For example, navigage to https://opendataphilly.org/, find a dataset that you'd like to import. I found city landmarks. On the page there is a link to a GeoJSON file. I simply right-clicked on that hyperlink and copied it and then used st_read() and pasted the link: 
+
+landmarks <- st_read("https://hub.arcgis.com/api/v3/datasets/6b2fe4a0fbe14e0a8e6afceaea230b8e_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1")
+
+### Your turn
+
+Pull **at least two layers** that you think relate to your outcome. Base your choice on your Part 2C answer.
+
+```{r}
+#| label: my-layers
+ #Layer 1: Affordable Housing Production
+affordable_housing <- st_read("https://hub.arcgis.com/api/v3/datasets/ca8944190b604b2aae7eff17c8dd9ef5_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1")
+
+affordable_housing <- affordable_housing %>%
+  filter(fiscal_year_complete >= 1995,
+         fiscal_year_complete <= 2023) 
+
+affordable_housing2 <- affordable_housing %>%
+  select(project_type,
+         fiscal_year_complete,
+         geometry)
+
+affordable_housing2 <- st_transform(
+  affordable_housing2,
+  st_crs(tracts)
+)
+
+#Layer 2: Empowerment Zones
+empowerment_zones <- st_read("https://hub.arcgis.com/api/v3/datasets/78fa563815654742909159b53fa4b065_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1")
+
+empowerment_zones2 <- empowerment_zones %>%
+  select(ZONE_NAME, geometry)
+
+empowerment_zones2 <- st_transform(
+ empowerment_zones2,
+  st_crs(tracts)
+)
+
+```
+
+**Answer:** Why these layers? What do you expect them to capture that the ACS variables don't?
+
+*I chose Affordable Housing production to include the role that housing cost plays in living below the poverty level. I included the city's Empowerment Zones because they have specific federal granted amenities (tax incentives, loans, etc) meant to attract and support businesses, or create employment for people. Both of these varibles aim to address larger issues related to lack of access to jobs and cost of living that both relate to poverty production.*
+
+---
+
+## Part 4: Building spatial features
+
+Every feature below reuses a Week 4 tool. The worked examples use burglaries and Indego stations; you build the same types from your own layers.
+
+### 4A: Counting
+
+How many burglaries fall in each tract?
+
+```{r}
+#| label: count
+tracts <- tracts %>%
+  mutate(n_affordable_housing2 = lengths(st_intersects(., affordable_housing2)))
+
+summary(tracts$n_affordable_housing2)
+
+tracts <- tracts %>%
+  select(-n_burglary)
+```
+
+A tract with no burglaries gets 0, not NA, so Rule 1 is safe.
+
+### 4B: Density: don't skip this
+
+Raw counts mostly measure **tract size**. A big tract has more of everything. Normalize by area, by population, or by housing units, depending on what makes sense for the thing you're counting.
+
+```{r}
+#| label: density
+tracts <- tracts %>%
+  mutate(
+    area_sqmi         = as.numeric(st_area(.)) / 27878400,
+    affhousing_per_sqmi = n_affordable_housing2 / area_sqmi,
+    affhousing_per_1k   = n_affordable_housing2 / total_popE * 1000
+  )
+```
+
+## Per capita in low-population tracts
+If a tract has 40 residents and 3 burglaries, its rate is 75 per 1,000, which is a huge number built on tiny counts. Look at the tracts with the highest per-capita rates before you trust them. This is the Week 3 lesson about small denominators again.
+:::
+
+### 4C: Measuring distance to the nearest thing
+
+How far is each tract from its nearest Indego station? Use the Week 4 pattern: find the nearest feature, then measure to it **element by element**.
+
+```{r}
+#| label: nearest
+
+tract_pts <- st_point_on_surface(tracts)   # always inside the tract, unlike a centroid
+
+nearest_idx <- st_nearest_feature(tract_pts, empowerment_zones2)
+
+tracts <- tracts %>%
+  mutate(dist_empowerment_mi = as.numeric(
+    st_distance(tract_pts, empowerment_zones2[nearest_idx, ], by_element = TRUE)) / 5280)
+```
+
+### 4D: Measuring distance to one place
+
+Sometimes the "thing" is a single location, such as City Hall as a stand-in for the center of the regional economy.
+
+```{r}
+#| label: city-hall
+city_hall <- st_sfc(st_point(c(-75.1636, 39.9526)), crs = 4326) %>%
+  st_transform(st_crs(tracts))
+
+tracts <- tracts %>%
+  mutate(dist_ch_mi = as.numeric(st_distance(tract_pts, city_hall)) / 5280)
+```
+
+### 4E: Your turn
+
+Build **at least three spatial features** from your own layers, and use at least two types (count, density, nearest distance, distance to a place). After **each one**, fit a model, cross-validate it, and log it.
+
+```{r}
+#| label: my-spatial
+
+#1 and 2: How many Affordable Housing buildings are there per square mile and per 1000 people?
+tracts <- tracts %>%
+  mutate(
+    area_sqmi         = as.numeric(st_area(.)) / 27878400,
+    affhousing_per_sqmi = n_affordable_housing2 / area_sqmi,
+    affhousing_per_1k   = n_affordable_housing2 / total_popE * 1000
+  )
+
+f2 <- per_below_poverty ~ affhousing_per_sqmi + affhousing_per_1k
+
+model_log <- model_log %>%
+  add_row(
+    model = "m2",
+    added = "Affordable housing density and per-capita rate",
+    cv_rmse = cv_rmse(f2, tracts),
+    notes = "Tests whether affordable housing concentration is associated with tract-level poverty"
+  )
+
+#3: How far is Affordable Housing from an Empowerment Zone? 
+
+tract_pts <- st_point_on_surface(tracts)
+
+nearest_idx <- st_nearest_feature(tract_pts, empowerment_zones2)
+
+tracts <- tracts %>%
+  mutate(dist_empowerment_mi = as.numeric(
+    st_distance(tract_pts, empowerment_zones2[nearest_idx, ], by_element = TRUE)) / 5280)
+
+f3 <- per_below_poverty ~ dist_empowerment_mi
+
+model_log <- model_log %>%
+  add_row(
+    model = "m3",
+    added = "Distance to nearest empowerment zone",
+    cv_rmse = cv_rmse(f3, tracts),
+    notes = "Tests whether proximity to empowerment zones is associated with tract-level poverty"
+  )
+
+model_log
+```
+
+**Answer:** Which spatial feature helped most? Did any feature you expected to help do nothing, or make CV RMSE worse? Why might that be?
+
+*All of my spatial layers, Affordable housing density, Affordable housing per-capita rate, and Distance to nearest empowerment zone made the CV RMSE slightly worse. This could mean that these are not the most important predictors to why people live below the poverty line. That could be because affordable housing is often not actually that affordable, and the empowerment zones may actually not create as many jobs as they are expected to.*
+
+---
+
+## Part 5: Transforming features
+
+**Watch the October 9 recorded lecture before you start this part.** Below is a summary to work from.
+
+So far, every predictor has entered the model as a straight line: each additional unit of X changes predicted Y by the same amount, everywhere. Transformations let the model bend. For prediction, the question is simply **does the bend lower CV RMSE?** For interpretation, each transformation changes what a coefficient means, so you need to know how to read it.
+
+::: {.callout-tip}
+## Transform predictors, not your outcome
+Keep your outcome `y` untransformed in this assignment. If you model `log(y)`, your CV RMSE comes out in log units and can't be compared to the other rows in your log. (Predicting a logged outcome well requires back-transforming, which is an A4 topic.)
+:::
+
+### 5A: Logs, for skewed predictors
+
+Many urban variables are skewed: a few tracts have huge values, and most have small ones. Income, density, and counts are typical. A log compresses the long tail, so a model can use the difference between 1 and 10 as well as the difference between 100 and 1,000.
+
+```{r}
+#| label: log-look
+ggplot(tracts, aes(x = affhousing_per_sqmi)) + geom_histogram(bins = 30) + theme_minimal()
+ggplot(tracts, aes(x = log1p(affhousing_per_sqmi))) + geom_histogram(bins = 30) + theme_minimal()
+```
+
+::: {.callout-warning}
+## log(0) doesn't exist
+`log(0)` is `-Inf`, and it will break your model. Counts and densities often include zeros. Use `log1p(x)`, which computes `log(x + 1)`, for anything that can be 0.
+:::
+
+**Reading the coefficient:** when a predictor is logged, a **1% increase** in X goes with a change of about **β/100** in Y, in Y's units. With `log1p`, this reading is approximate for small values of X.
+
+### 5B: Squared terms, for curves
+
+If your scatterplot bends (rising and then flattening, or falling and then rising), a squared term lets the line curve. Write it with `I()`, which tells R to do the arithmetic rather than read `^` as formula syntax.
+
+```{r}
+#| label: squared-example
+m_sq <- lm(per_below_poverty ~ dist_ch_mi + I(dist_ch_mi^2), data = tracts)
+summary(m_sq)
+```
+
+**Reading the coefficient:** you can't read either coefficient alone anymore. The effect of X depends on where you are along X. A positive linear term with a negative squared term means Y rises with X and then levels off or turns down. Plot the fitted curve to see it:
+
+```{r}
+#| label: squared-plot
+ggplot(tracts, aes(x = dist_ch_mi, y = y)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), se = FALSE, color = "red") +
+  theme_minimal()
+```
+
+### 5C: Categorical variables
+
+Sometimes a number works better as groups, either because the relationship isn't smooth or because the categories are meaningful. You can make categories from any variable with `case_when()` or `cut()`, and then make sure R treats them as a **factor**.
+
+```{r}
+#| label: categorical-example
+tracts <- tracts %>%
+  mutate(
+    ring = case_when(
+      dist_ch_mi < 2 ~ "Core",
+      dist_ch_mi < 5 ~ "Inner",
+      TRUE           ~ "Outer"
+    ),
+    ring = factor(ring, levels = c("Core", "Inner", "Outer"))
+  )
+
+tracts %>% st_drop_geometry() %>% count(ring)
+
+m_cat <- lm(y ~ ring, data = tracts)
+summary(m_cat)
+```
+
+### 5D: Your turn
+
+Try **at least one of each**: a log, a squared term, and a categorical variable. Choose which variables to transform based on your plots, not at random. Log each model.
+
+```{r}
+#| label: my-transforms
+
+# my log
+
+ggplot(tracts, aes(x = affhousing_per_sqmi)) + geom_histogram(bins = 30) + theme_minimal()
+ggplot(tracts, aes(x = log1p(affhousing_per_sqmi))) + geom_histogram(bins = 30) + theme_minimal()
+
+f_log <- per_below_poverty ~ log1p(affhousing_per_sqmi)
+
+model_log <- model_log %>%
+  add_row(model = "m3", added = "log of affhousing_per_sqmi",
+          cv_rmse = cv_rmse(f_log, tracts),
+          notes = "Log transformation reduces right skew in affordable housing density")
+
+# my squared term
+
+ggplot(tracts, aes(x = dist_empowerment_mi, y = per_below_poverty)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), se = FALSE, color = "red") +
+  theme_minimal()
+
+f_squared <- per_below_poverty ~
+  dist_empowerment_mi +
+  I(dist_empowerment_mi^2)
+
+model_log <- model_log %>%
+  add_row(model="m4", added = "Squared Distance to Empowerment Zone",
+          cv_rmse = cv_rmse(f_squared, tracts),
+          notes = "Tests whether the relationship between distance to empowerment zones and poverty rates is nonlinear")
+
+# categorical
+tracts <- tracts %>%
+  mutate(
+    ring = case_when(
+      dist_empowerment_mi < 2 ~ "Core",
+      dist_empowerment_mi < 5 ~ "Inner",
+      TRUE           ~ "Outer"
+    ),
+    ring = factor(ring, levels = c("Core", "Inner", "Outer"))
+  )
+f_cat <- per_below_poverty ~ ring
+
+tracts %>% st_drop_geometry() %>% count(ring)
+
+m_cat <- lm(per_below_poverty ~ ring, data = tracts)
+summary(m_cat)
+
+model_log <- model_log %>%
+  add_row(model="m5", added = "Categorical Distance Rings",
+          cv_rmse = cv_rmse (f_cat, tracts),
+          notes = "Tests whether poverty rates differ across Core, Inner, and Outer distance groups")
+
+model_log
+```
+
+**Answer:** Which transformation helped most? For your categorical variable, write one sentence reading one of its coefficients correctly, naming the reference level.
+
+*The transformation that helped me the most was the Squared Distance to Empowerment Zone (m4), which has a cv_rmse of 12.53. This means that it helps predict poverty rates best because it had the lowest cross-validation prediction error. For the categorical variable, the poverty rate in Inner census tracts is, on average, 3.56 percentage points lower than in Core census tracts, the reference category. The difference is statistically significant (p=0.0146). *
+
+---
+
+## Part 6: Your final model
+
+Combine the features and transformations that earned their place, **judged by CV RMSE, not p-values.**
+
+```{r}
+#| label: final
+
+f_final <- per_below_poverty ~ log1p(affhousing_per_sqmi) + dist_empowerment_mi + I(dist_empowerment_mi^2)
+
+m_final <- lm(f_final, data = tracts)
+summary(m_final)
+
+model_log <- model_log %>%
+  add_row(
+    model = "final",
+    added = "Log affordable housing density and squared distance",
+    cv_rmse = cv_rmse(f_final, tracts),
+    notes = "Combines a log transformation and a quadratic distance term to model potential nonlinear relationships with poverty"
+  )
+
+model_log
+```
+
+### Where is the final model wrong?
+
+```{r}
+#| label: resid-map-2
+tracts <- tracts %>% mutate(resid_final = residuals(m_final))
+
+ggplot(tracts) +
+  geom_sf(aes(fill = resid_final), color = NA) +
+  scale_fill_gradient2(low = "orange", mid = "grey95", high = "#b2182b", midpoint = 0) +
+  theme_void() +
+  labs(title = "Final model: where it's wrong",
+       subtitle = "Red = actual higher than predicted",
+       fill = "Residual")
+```
+
+Put your two residual maps side by side, or put them next to each other in the rendered document. Did the clusters from Part 2C shrink? Where did they stay?
+
+*The two maps look almost identical. This makes sense considering the residuals for the two maps were close, with the Baseline model at 11.85 and the Final at 12.44.*
+
+### Are the biggest misses in the least reliable tracts?
+
+```{r}
+#| label: fog
+ggplot(tracts, aes(x = per_below_poverty_cv, y = abs(resid_final))) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(se = FALSE) +
+  labs(x = "CV of your outcome estimate (%)", y = "Size of the miss") +
+  theme_minimal()
+
+summary(m_final)
+```
+
+---
+
+## Part 7: Reflection (about 300 words)
+
+Answer in prose, drawing on your model log (incorporate our words of the day for bonus points. just kidding):
+
+1. **What helped, and what didn't?** Name the feature that lowered CV RMSE the most and the one that disappointed you most. Offer a reason for each.
+
+The ACS baseline model (m1) performed best, with a CV RMSE of 11.85, indicating the lowest prediction error. The log transformation of affordable housing density did not improve the model, with a CV RMSE of 12.91. This may be because affordable housing density does not have a strong enough relationship with poverty rates to improve predictions beyond the baseline variables. The affordable housing density and per-capita rate model (m2) performed worst, with a CV RMSE of 13.40, suggesting that these additional predictors did not provide enough useful information to improve the model’s accuracy.
+
+Another feature that lowered the CV RMSE the most was the Squared Distance to Empowerment Zone model. This was interesting to me, considering that I tend to believe that a lot of this city-sponsored programs tend to have hollow promises of alleviating poverty and don't often get to the source of the problem (decades of disinvestment, lack of jobs).
+
+2. **Read one coefficient twice.** Choose a variable in your final model. Give its β̂ reading and its ŷ reading in one sentence each
+
+β̂ reading: Holding distance to the nearest empowerment zone and its squared term constant, a one-unit increase in log-transformed affordable housing density is associated with a 1.56 percentage-point increase in the predicted poverty rate.
+
+ŷ reading: For a census tract with an affordable housing density of 10 buildings per square mile and a distance of 3 miles from the nearest empowerment zone, the model predicts a poverty rate of approximately 27.8%.
+
+The predicted value is an illustrative example using those specific predictor values.
+
+.
+3. **What's still missing?** Look at your final residual map. Name one thing about those places you'd want to measure next, and where you might get the data.
+
+Considering that the baseline and final map did not shift visually in a huge way, I think I would want to considering employment rates next. I didn't want to use this in the initial model because it felt a bit obvious, but I'm curious to see how much it shifts the baseline. I would get this data from the 5-year ACS for 2023.
+
+
+4. **How much of the remaining error might be uncertainty or statistical noise?** Use your last plot.
+
+The remaining prediction error may partly reflect statistical uncertainty in the poverty estimates, particularly in census tracts with higher coefficients of variation (CV). If the plot shows that larger prediction errors tend to occur in tracts with higher CVs, this suggests that some of the model’s error may be due to uncertainty in the underlying estimates rather than the model itself. However, other factors not included in the model may also contribute to the remaining error.
+
