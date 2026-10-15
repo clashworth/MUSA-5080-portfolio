@@ -12,38 +12,6 @@ execute:
   message: false
 freeze: false
 ---
-
-## What this assignment is (and isn't)
-
-This is **not a competition.** There's no leaderboard and no target RMSE. The goal is to practice the full prediction workflow on a question you choose, and to **find out what actually helps.** Some features you're sure will help won't, and some you add on a whim will. Both are findings.
-
-You'll:
-
-1. Choose a tract-level outcome for Philadelphia and check whether it's reliable enough to model (Weeks 2–3).
-2. Fit a baseline model and cross-validate it (Week 5).
-3. Pull data from Philadelphia's open data portal through its API and build spatial features: counts, densities, and distances (Week 4, plus one new tool).
-4. Transform variables with logs, squared terms, and categories. **Watch the October 9 recorded lecture before Part 5.**
-5. Keep a **model log** the whole way through, and compare where your first and final models go wrong.
-
-**Timing.** Parts 1–4 use only what we've covered through Week 5. You can finish them before the October 9 lecture. Part 5 is new material; the lecture explains it, and the instructions below give you the essentials.
-
-**Type the code yourself.** The worked examples show the pattern. Your job is to apply it to your outcome and your data choices.
-
-### Three rules that apply everywhere
-
-::: {.callout-important}
-## 1. Don't drop rows
-Every model is cross-validated on the same tracts with the same folds, so the rows in your model log are comparable. If a new variable has missing values, fill them (for example, 0 for a count, or the median with a note) or choose a different variable. The `cv_rmse()` helper below will stop and tell you if you break this rule.
-
-## 2. Stay inside the time window
-Your outcome comes from the 2019–2023 ACS. Pull open data from **2023 or earlier** (2021–2023 is ideal). Using 2025 data to predict a 2023 outcome uses information from the future, which a real prediction model would never have.
-
-## 3. No leakage
-Don't use any variable that's built from your outcome or measures the same thing another way. Ask yourself: *would an agency trying to predict this outcome for a tract have this variable?* If the answer is "only because it's basically the outcome," leave it out.
-:::
-
----
-
 ## Part 0: Setup
 
 ```{r}
@@ -57,8 +25,6 @@ Sys.getenv("CENSUS_API_KEY") != ""   # should print TRUE
 ```
 
 ### The cross-validation helper
-
-This function runs 10-fold cross-validation with the same seed every time, so every model in your log is tested on the same folds. **You don't need to change it.** Read it once so you know what it does.
 
 ```{r}
 #| label: cv-helper
@@ -80,8 +46,6 @@ cv_rmse <- function(formula, data) {
 
 ### The model log
 
-Every time you fit a new model, add a row. By the end, this table is the story of your assignment.
-
 ```{r}
 #| label: log-start
 model_log <- tibble(
@@ -96,28 +60,8 @@ model_log <- tibble(
 
 ## Part 1: Choose your outcome
 
-Pick a **tract-level ACS variable for Philadelphia** that matters for policy. Two outcomes are off limits: median gross rent (we did it in lab) and median home value (save it for A4).
-
-Some ideas if you're stuck:
-
-| Outcome | Why an agency might care | ACS table |
-|---|---|---|
-| % of households with no vehicle | Transit planning | B08201 or B25044 |
-| Mean travel time to work | Access to jobs | B08013_001 ÷ B08303_001 |
-| % of people below poverty | Targeting services | B17001 |
-| % of housing units vacant | Housing and blight | B25002 |
-| % of households overcrowded | Housing conditions | B25014 |
-
-Use `load_variables(2023, "acs5")` to browse and find exact variable codes.
-
-```{r}
-load_variables(2023, "acs5")
-```
-
-
 ### 1A: Pull your outcome and your baseline predictors
 
-Choose **three to five ACS predictors** for your baseline model. They should be things that plausibly relate to your outcome, but **none of them may be built from your outcome** (Rule 3).
 
 ```{r}
 #| label: pull
@@ -170,7 +114,6 @@ philly_tracts <- philly_tracts %>%
 
 ### 1B: Is it reliable enough to model?
 
-Before you commit, check three things.
 
 ```{r}
 #| label: reliability
@@ -195,15 +138,12 @@ ggplot(philly_tracts, aes(x = per_below_poverty_cv)) +
   theme_minimal()
 ```
 
-If more than about a third of tracts have low reliability, consider a different outcome, or one built from larger counts. Write your reasoning either way.
 
-**Answer (2–3 sentences):** What is your outcome, why would an agency want to predict it, and how reliable is it?
+What is your outcome, why would an agency want to predict it, and how reliable is it?
 
 *My outcome variable is percent of the total population below poverty by census tract in Philadelphia County. An agency would want to predict this in order to know which areas are in need of services relates to poverty alleviation (jobs, more funding for schools). The reliability of the outcome is high, in that only 4.9% (20) of the census tracts have CVs with a low reliability, while 95% (388) have CVs with high reliability.*
 
 ### 1C: Decide which tracts to model
-
-Filter once, here, and never again. Every later step uses `tracts`.
 
 ```{r}
 #| label: filter
@@ -218,7 +158,7 @@ nrow(philly_tracts)
 nrow(tracts)
 ```
 
-**Answer:** How many tracts did you lose, and what kinds of places are they?
+How many tracts did you lose, and what kinds of places are they?
 
 *We lost 17 census tracts. Cross-checking with a map, these are places that are mainly zoned industrial with little to no population.*
 
@@ -227,8 +167,6 @@ nrow(tracts)
 ## Part 2: Baseline model
 
 ### 2A: Look first
-
-Plot your outcome against each predictor before modeling (the Week 3 habit).
 
 ```{r}
 #| label: look
@@ -262,11 +200,10 @@ model_log <- model_log %>%
 model_log
 ```
 
-#Write the CV RMSE as a sentence, in your outcome's units: "On tracts it hasn't seen, the baseline model misses by about 11.85 percentage points.#
+Write the CV RMSE as a sentence, in your outcome's units:
+*On tracts it hasn't seen, the baseline model misses by about 11.85 percentage points.*
 
 ### 2C: Where is the baseline wrong?
-
-Save this map. You'll compare it to your final model's map in Part 6.
 
 ```{r}
 #| label: resid-map-1
@@ -285,27 +222,9 @@ Where do the residuals cluster? What might those places have in common that your
 
 *The residuals are clustering in North Philadelphia, Brewery Town, and Strawberry Mansion. This means that these are census tracts where percent of the population below poverty is higher than the model (the three predictors of no schooling, female population, and black population) predicts. This means that there may be other reasons people are living below poverty that might more accurately explain the difference, such as neighborhood disinvestment or access to employment.*
 
-**Use this answer to choose your open data layers in Part 3.**
-
 ---
 
 ## Part 3: Getting data from Philadelphia's open data portal
-
-Many of the city's datasets on [OpenDataPhilly](https://opendataphilly.org) are served through a **Carto SQL API**. You send a SQL query in a URL, and it sends back data. Ask for `format=GeoJSON` and `st_read()` reads the result directly, just like the Indego feed in Week 4.
-
-The pattern:
-
-```
-https://phl.carto.com/api/v2/sql?format=GeoJSON&q=SELECT ... FROM table_name WHERE ...
-```
-
-Three pieces of SQL are all you need:
-
-- `SELECT the_geom, column1, column2` chooses which columns come back. **Always include `the_geom`**, or you get no geometry.
-- `FROM table_name` chooses the dataset.
-- `WHERE ...` filters rows. **Filter in the query, not in R.** Some tables have millions of rows, and pulling everything will be slow or fail.
-
-This helper builds the URL for you. Spaces and symbols in a URL need encoding, and `URLencode()` handles that.
 
 ```{r}
 #| label: carto-helper
@@ -315,66 +234,7 @@ carto_get <- function(sql) {
 }
 ```
 
-### Finding a table name
-
-On a dataset's OpenDataPhilly page, look for the API link. The table name is the word after `FROM` in the example query. To see what values a column takes before you filter on it, ask for a count in CSV format:
-
-```{r}
-#| label: explore-values
-# What kinds of crime are in the incidents table in 2023?
-url <- paste0("https://phl.carto.com/api/v2/sql?format=csv&q=",
-              URLencode("SELECT text_general_code, COUNT(*) AS n
-                         FROM incidents_part1_part2
-                         WHERE dispatch_date >= '2023-01-01' AND dispatch_date < '2024-01-01'
-                         GROUP BY text_general_code ORDER BY n DESC"))
-read_csv(url)
-```
-
-### Worked example: residential burglaries in 2023
-
-```{r}
-#| label: worked-burglary
-burglary <- carto_get(
-  "SELECT the_geom, text_general_code, dispatch_date
-   FROM incidents_part1_part2
-   WHERE dispatch_date >= '2023-01-01' AND dispatch_date < '2024-01-01'
-     AND text_general_code = 'Burglary Residential'"
-) %>%
-  st_transform(st_crs(tracts))    # Carto returns EPSG 4326; translate immediately
-
-nrow(burglary)
-
-burglary <- burglary %>%
-  filter(!st_is_empty(geometry))
-
-```
-
-::: {.callout-warning}
-## Check for missing geometry
-Some records have no location. Drop them with `filter(!st_is_empty(burglary))`, and count how many you lost. Every point you drop is a point that won't be counted.
-
-*There are now 3681 burglaries.*
-:::
-
-### Other layers to try
-
-These tables were available on Carto as of this fall. If a query fails, check the dataset's OpenDataPhilly page for the current table name.
-
-| Data | Table | Filter on | Notes |
-|---|---|---|---|
-| Crime incidents | `incidents_part1_part2` | `dispatch_date`, `text_general_code` | Pick specific offense types |
-| Shooting victims | `shootings` | `date_` | Small enough to pull several years |
-| 311 requests | `public_cases_fc` | `requested_datetime`, `service_name` | Use the count query above to see service names |
-| Indego stations | *(not Carto)* `https://www.rideindego.com/stations/json/` | — | The Week 4 feed |
-
-Datasets not on Carto often have a GeoJSON download link on their OpenDataPhilly page. `st_read()` reads those URLs too.
-For example, navigage to https://opendataphilly.org/, find a dataset that you'd like to import. I found city landmarks. On the page there is a link to a GeoJSON file. I simply right-clicked on that hyperlink and copied it and then used st_read() and pasted the link: 
-
-landmarks <- st_read("https://hub.arcgis.com/api/v3/datasets/6b2fe4a0fbe14e0a8e6afceaea230b8e_0/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1")
-
 ### Your turn
-
-Pull **at least two layers** that you think relate to your outcome. Base your choice on your Part 2C answer.
 
 ```{r}
 #| label: my-layers
@@ -408,79 +268,13 @@ empowerment_zones2 <- st_transform(
 
 ```
 
-**Answer:** Why these layers? What do you expect them to capture that the ACS variables don't?
+Why these layers? What do you expect them to capture that the ACS variables don't?
 
 *I chose Affordable Housing production to include the role that housing cost plays in living below the poverty level. I included the city's Empowerment Zones because they have specific federal granted amenities (tax incentives, loans, etc) meant to attract and support businesses, or create employment for people. Both of these varibles aim to address larger issues related to lack of access to jobs and cost of living that both relate to poverty production.*
 
 ---
 
 ## Part 4: Building spatial features
-
-Every feature below reuses a Week 4 tool. The worked examples use burglaries and Indego stations; you build the same types from your own layers.
-
-### 4A: Counting
-
-How many burglaries fall in each tract?
-
-```{r}
-#| label: count
-tracts <- tracts %>%
-  mutate(n_affordable_housing2 = lengths(st_intersects(., affordable_housing2)))
-
-summary(tracts$n_affordable_housing2)
-
-tracts <- tracts %>%
-  select(-n_burglary)
-```
-
-A tract with no burglaries gets 0, not NA, so Rule 1 is safe.
-
-### 4B: Density: don't skip this
-
-Raw counts mostly measure **tract size**. A big tract has more of everything. Normalize by area, by population, or by housing units, depending on what makes sense for the thing you're counting.
-
-```{r}
-#| label: density
-tracts <- tracts %>%
-  mutate(
-    area_sqmi         = as.numeric(st_area(.)) / 27878400,
-    affhousing_per_sqmi = n_affordable_housing2 / area_sqmi,
-    affhousing_per_1k   = n_affordable_housing2 / total_popE * 1000
-  )
-```
-
-## Per capita in low-population tracts
-If a tract has 40 residents and 3 burglaries, its rate is 75 per 1,000, which is a huge number built on tiny counts. Look at the tracts with the highest per-capita rates before you trust them. This is the Week 3 lesson about small denominators again.
-:::
-
-### 4C: Measuring distance to the nearest thing
-
-How far is each tract from its nearest Indego station? Use the Week 4 pattern: find the nearest feature, then measure to it **element by element**.
-
-```{r}
-#| label: nearest
-
-tract_pts <- st_point_on_surface(tracts)   # always inside the tract, unlike a centroid
-
-nearest_idx <- st_nearest_feature(tract_pts, empowerment_zones2)
-
-tracts <- tracts %>%
-  mutate(dist_empowerment_mi = as.numeric(
-    st_distance(tract_pts, empowerment_zones2[nearest_idx, ], by_element = TRUE)) / 5280)
-```
-
-### 4D: Measuring distance to one place
-
-Sometimes the "thing" is a single location, such as City Hall as a stand-in for the center of the regional economy.
-
-```{r}
-#| label: city-hall
-city_hall <- st_sfc(st_point(c(-75.1636, 39.9526)), crs = 4326) %>%
-  st_transform(st_crs(tracts))
-
-tracts <- tracts %>%
-  mutate(dist_ch_mi = as.numeric(st_distance(tract_pts, city_hall)) / 5280)
-```
 
 ### 4E: Your turn
 
@@ -493,8 +287,8 @@ Build **at least three spatial features** from your own layers, and use at least
 tracts <- tracts %>%
   mutate(
     area_sqmi         = as.numeric(st_area(.)) / 27878400,
-    affhousing_per_sqmi = n_affordable_housing2 / area_sqmi,
-    affhousing_per_1k   = n_affordable_housing2 / total_popE * 1000
+    affhousing_per_sqmi = affordable_housing2 / area_sqmi,
+    affhousing_per_1k   = affordable_housing2 / total_popE * 1000
   )
 
 f2 <- per_below_poverty ~ affhousing_per_sqmi + affhousing_per_1k
