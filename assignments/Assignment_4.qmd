@@ -284,11 +284,19 @@ Build **at least three spatial features** from your own layers, and use at least
 #| label: my-spatial
 
 #1 and 2: How many Affordable Housing buildings are there per square mile and per 1000 people?
+
+
+tracts <- tracts %>%
+  mutate(n_affordable_housing2 = lengths(st_intersects(., affordable_housing2)))
+
+summary(tracts$n_affordable_housing2)
+
+
 tracts <- tracts %>%
   mutate(
     area_sqmi         = as.numeric(st_area(.)) / 27878400,
-    affhousing_per_sqmi = affordable_housing2 / area_sqmi,
-    affhousing_per_1k   = affordable_housing2 / total_popE * 1000
+    affhousing_per_sqmi = n_affordable_housing2 / area_sqmi,
+    affhousing_per_1k   = n_affordable_housing2 / total_popE * 1000
   )
 
 f2 <- per_below_poverty ~ affhousing_per_sqmi + affhousing_per_1k
@@ -332,18 +340,6 @@ model_log
 
 ## Part 5: Transforming features
 
-**Watch the October 9 recorded lecture before you start this part.** Below is a summary to work from.
-
-So far, every predictor has entered the model as a straight line: each additional unit of X changes predicted Y by the same amount, everywhere. Transformations let the model bend. For prediction, the question is simply **does the bend lower CV RMSE?** For interpretation, each transformation changes what a coefficient means, so you need to know how to read it.
-
-::: {.callout-tip}
-## Transform predictors, not your outcome
-Keep your outcome `y` untransformed in this assignment. If you model `log(y)`, your CV RMSE comes out in log units and can't be compared to the other rows in your log. (Predicting a logged outcome well requires back-transforming, which is an A4 topic.)
-:::
-
-### 5A: Logs, for skewed predictors
-
-Many urban variables are skewed: a few tracts have huge values, and most have small ones. Income, density, and counts are typical. A log compresses the long tail, so a model can use the difference between 1 and 10 as well as the difference between 100 and 1,000.
 
 ```{r}
 #| label: log-look
@@ -362,43 +358,8 @@ ggplot(tracts, aes(x = log1p(affhousing_per_sqmi))) + geom_histogram(bins = 30) 
 
 If your scatterplot bends (rising and then flattening, or falling and then rising), a squared term lets the line curve. Write it with `I()`, which tells R to do the arithmetic rather than read `^` as formula syntax.
 
-```{r}
-#| label: squared-example
-m_sq <- lm(per_below_poverty ~ dist_ch_mi + I(dist_ch_mi^2), data = tracts)
-summary(m_sq)
-```
 
 **Reading the coefficient:** you can't read either coefficient alone anymore. The effect of X depends on where you are along X. A positive linear term with a negative squared term means Y rises with X and then levels off or turns down. Plot the fitted curve to see it:
-
-```{r}
-#| label: squared-plot
-ggplot(tracts, aes(x = dist_ch_mi, y = y)) +
-  geom_point(alpha = 0.4) +
-  geom_smooth(method = "lm", formula = y ~ x + I(x^2), se = FALSE, color = "red") +
-  theme_minimal()
-```
-
-### 5C: Categorical variables
-
-Sometimes a number works better as groups, either because the relationship isn't smooth or because the categories are meaningful. You can make categories from any variable with `case_when()` or `cut()`, and then make sure R treats them as a **factor**.
-
-```{r}
-#| label: categorical-example
-tracts <- tracts %>%
-  mutate(
-    ring = case_when(
-      dist_ch_mi < 2 ~ "Core",
-      dist_ch_mi < 5 ~ "Inner",
-      TRUE           ~ "Outer"
-    ),
-    ring = factor(ring, levels = c("Core", "Inner", "Outer"))
-  )
-
-tracts %>% st_drop_geometry() %>% count(ring)
-
-m_cat <- lm(y ~ ring, data = tracts)
-summary(m_cat)
-```
 
 ### 5D: Your turn
 
